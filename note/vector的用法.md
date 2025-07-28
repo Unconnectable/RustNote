@@ -45,3 +45,70 @@ fn main() {
     println!("翻倍的数字: {:?}", doubled_numbers); // 输出: 翻倍的数字: [2, 4, 6, 8, 10]
 }
 ```
+
+
+
+
+
+使用`into_iter` 和 `for _ in vec`的对比遍历一个Vec然后返回修改的值
+
+```rust
+
+enum Command {
+    Uppercase,
+    Trim,
+    Append(usize),
+}
+
+mod my_module {
+    use super::Command;
+
+    // TODO: Complete the function as described above.
+    pub fn transformer(input: Vec<(String, Command)>) -> Vec<String> {
+        // input
+        //     .into_iter()
+        //     .map(|(s, command)| {
+        //         match command {
+        //             Command::Uppercase => s.to_uppercase(),
+        //             Command::Trim => s.trim().to_string(),
+        //             Command::Append(n) => format!("{}{}", s, "bar".repeat(n)), //format!("{}{}", s, "bar".repeat(n)),
+        //         }
+        //     })
+        //     .collect()
+        let mut output = Vec::new();
+        for (s, command) in input {
+            let s_ = match command {
+                Command::Uppercase => s.to_uppercase(),
+                Command::Trim => s.trim().to_string(),
+                Command::Append(n) => format!("{}{}", s, "bar".repeat(n)),
+            };
+            output.push(s_);
+        }
+        output
+    }
+}
+
+fn main() {
+    //
+}
+
+#[cfg(test)]
+mod tests {
+    use super::my_module::transformer;
+    use super::Command;
+
+    #[test]
+    fn it_works() {
+        let input = vec![
+            ("hello".to_string(), Command::Uppercase),
+            (" all roads lead to rome! ".to_string(), Command::Trim),
+            ("foo".to_string(), Command::Append(1)),
+            ("bar".to_string(), Command::Append(5))
+        ];
+        let output = transformer(input);
+
+        assert_eq!(output, ["HELLO", "all roads lead to rome!", "foobar", "barbarbarbarbarbar"]);
+    }
+}
+```
+
