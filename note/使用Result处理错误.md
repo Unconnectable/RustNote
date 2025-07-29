@@ -5,7 +5,7 @@
 - `Ok(T)`：表示操作成功，并返回一个值 `T`。
 - `Err(E)`：表示操作失败，并返回一个错误 `E`。
 
-注意match时候的返回`Result`返回类型
+注意 match 时候的返回`Result`返回类型
 
 **以下的例子中 `value = 0 || v <0` 会返回`CreationError`的类型，是`Err`，而不是第一个参数`Ok`的`Self`类型**
 
@@ -52,13 +52,9 @@ mod tests {
 }
 ```
 
+枚举 结构体 混合和 Result 的处理
 
-
-
-
-枚举 结构体 混合和Result的处理
-
-看`rustlings`的  [rustlings/exercises/13_error_handling/errors6.rs ](https://github.com/rust-lang/rustlings/blob/main/exercises/13_error_handling/errors6.rs) 的案例
+看`rustlings`的 [rustlings/exercises/13_error_handling/errors6.rs ](https://github.com/rust-lang/rustlings/blob/main/exercises/13_error_handling/errors6.rs) 的案例
 
 ```rust
 use std::num::ParseIntError;
@@ -184,8 +180,6 @@ impl<T, E> Result<T, E> {
 
 恰好通过`parse()`后的返回类型是 `Result<i64, std::num::ParseIntError>`
 
-
-
 ### 1. 理解 `Result` 的 `map_err` 方法
 
 回顾 `Result<T, E>` 的 `map_err` 方法的定义：
@@ -211,13 +205,11 @@ impl<T, E> Result<T, E> {
 - 如果 `Result` 是 `Ok(t)`，`map_err` 不会做任何操作，直接返回 `Ok(t)`。
 - 最终，`map_err` 返回一个新的 `Result`，它的 `Ok` 类型保持不变（`T`），但 `Err` 类型变成了新的类型 `F`。
 
-------
-
-
+---
 
 ### 2. `s.parse().map_err(ParsePosNonzeroError::from_parse_int)` 的步骤分解
 
-步骤2
+步骤 2
 
 ```rust
 let x: i64 = s.parse().map_err(ParsePosNonzeroError::from_parse_int)?;
@@ -232,13 +224,9 @@ let x: i64 = s.parse().map_err(ParsePosNonzeroError::from_parse_int)?;
 - **情况 1: 解析成功** `Ok(value: i64)`，例如 `Ok(123)`。这里的 `value` 是解析出来的整数。
 - **情况 2: 解析失败** `Err(error: std::num::ParseIntError)`，例如 `Err(ParseIntError { ... })`。这里的 `error` 是一个具体的解析错误。
 
-------
-
-
+---
 
 #### **步骤 B: `.map_err(ParsePosNonzeroError::from_parse_int)` 的应用**
-
-
 
 现在，`map_err` 方法会作用在 **步骤 A** 得到的结果上。
 
@@ -262,9 +250,7 @@ let x: i64 = s.parse().map_err(ParsePosNonzeroError::from_parse_int)?;
 
   因此，`map_err` 最终会返回 `Err(ParsePosNonzeroError::ParseInt(original_parse_int_error))`。
 
-------
-
-
+---
 
 #### **步骤 C: `"?"` 运算符的介入**
 
@@ -273,13 +259,9 @@ let x: i64 = s.parse().map_err(ParsePosNonzeroError::from_parse_int)?;
 - **如果结果是 `Ok(i64)` (成功路径)**： `?` 运算符会解包 `Ok` 中的 `i64` 值，并将其赋值给 `x`。此时，`x` 的类型就是 `i64`。
 - **如果结果是 `Err(ParsePosNonzeroError::ParseInt(...))` (失败路径)**： `?` 运算符会立即从当前的 `parse` 函数中返回这个 `Err(ParsePosNonzeroError::ParseInt(...))`。这意味着整个 `parse` 函数的执行会在这里停止，并将错误传递给它的调用者。
 
-
-
-
-
 `Self::new(x).map_err(ParsePosNonzeroError::from_creation)`
 
-如果上一步`let x: i64 = s.parse().map_err(ParsePosNonzeroError::from_parse_int)?;` 解析字符串为数字成功的话，得到的x是i64类型的话，会进行下一步的对x的范围进行判断
+如果上一步`let x: i64 = s.parse().map_err(ParsePosNonzeroError::from_parse_int)?;` 解析字符串为数字成功的话，得到的 x 是 i64 类型的话，会进行下一步的对 x 的范围进行判断
 
 ```rust
 impl PositiveNonzeroInteger {
@@ -293,9 +275,9 @@ impl PositiveNonzeroInteger {
 }
 ```
 
-这里根据x的值返回不同类型的 `Ok(u64)` 或者 `Err(CreationError)` 
+这里根据 x 的值返回不同类型的 `Ok(u64)` 或者 `Err(CreationError)`
 
-继续使用`map_err`  ,这个时候传入的 闭包函数是
+继续使用`map_err` ,这个时候传入的 闭包函数是
 
 ```rust
 fn from_creation(err: CreationError) -> Self {

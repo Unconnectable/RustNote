@@ -147,3 +147,75 @@ fn main() {
     println!("使用 String::new() 和 push_str(): {}", my_string);
 }
 ```
+
+获取`String` 类型的切片 ,比如
+
+```rust
+let mut s = String::from("hello, world");
+//想要获取"hello"
+let slice1: &str = &s[0..5];
+```
+
+如何对`Stirng`类型进行加法?
+
+```rust
+fn main() {
+    let s1 = "hello";
+    let s2 = "world";
+    let combined_str: String = format!("{}, {}!", s1, s2);
+    let S1: &str = &combined_str;
+    println!("combined_str1: {S1}");
+    println!("");
+
+    let s3 = "hello";
+    let s4 = ", world!";
+    let combined_str2: String = s3.to_owned() + s4;
+    let S2: &str = &combined_str2;
+    println!("combined_str2: {S2}");
+    println!("");
+
+    let s5 = "hello";
+    let s6 = ", world!";
+    let mut combined_str3: String = String::new();
+    combined_str3.push_str(s5); // 添加第1个 &str
+    combined_str3.push_str(s6); // 添加第2个 &str
+    let S3: &str = &combined_str3;
+    println!("combined_str3: {S3}");
+    println!("");
+}
+```
+
+
+
+
+
+String的三个元素:
+
+罗指针 当前的使用的长度和容量
+
+```rust
+use std::mem;
+
+fn main() {
+    let story = String::from("Rust By Practice");
+
+    // 阻止 String 的数据被自动 drop
+    let mut story = mem::ManuallyDrop::new(story);
+
+    //获得裸指针 这个行为是 Unsafe 的
+    let ptr = story.as_mut_ptr();
+    let len = story.len();
+    let capacity = story.capacity();
+
+    assert_eq!(16, len);
+
+    // 我们可以基于 ptr 指针、长度和容量来重新构建 String.
+    // 这种操作必须标记为 unsafe，因为我们需要自己来确保这里的操作是安全的
+    let s = unsafe { String::from_raw_parts(ptr, len, capacity) };
+
+    assert_eq!(*story, s);
+
+    println!("Success!")
+}
+```
+
