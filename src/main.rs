@@ -1,28 +1,34 @@
-trait IpAddr {
-    fn display(&self);
+fn nput(x: &i32) {
+    println!("`annotated_input`: {}", x);
 }
 
-struct V4(String);
-impl IpAddr for V4 {
-    fn display(&self) {
-        println!("ipv4: {:?}", self.0)
-    }
+fn pass(x: &i32) -> &i32 {
+    x
 }
-struct V6(String);
-impl IpAddr for V6 {
-    fn display(&self) {
-        println!("ipv6: {:?}", self.0)
+
+fn longest<'a, 'b>(x: &'a str, y: &'b str) -> &'a str {
+    x
+}
+
+struct Owner(i32);
+
+impl Owner {
+    fn add_one(&mut self) {
+        self.0 += 1;
+    }
+    fn print(&self) {
+        println!("`print`: {}", self.0);
     }
 }
 
-fn main() {
-    // 填空
-    let v: Vec<Box<dyn IpAddr>> = vec![
-        Box::new(V4("127.0.0.1".to_string())),
-        Box::new(V6("::1".to_string())),
-    ];
-
-    for ip in v {
-        ip.display();
-    }
+struct Person<'a> {
+    age: u8,
+    name: &'a str,
 }
+
+enum Either<'a> {
+    Num(i32),
+    Ref(&'a i32),
+}
+
+fn main() {}
