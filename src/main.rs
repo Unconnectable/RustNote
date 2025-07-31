@@ -1,34 +1,44 @@
-fn nput(x: &i32) {
-    println!("`annotated_input`: {}", x);
+struct Interface<'b, 'a: 'b> {
+    manager: &'b mut Manager<'a>,
 }
 
-fn pass(x: &i32) -> &i32 {
-    x
-}
-
-fn longest<'a, 'b>(x: &'a str, y: &'b str) -> &'a str {
-    x
-}
-
-struct Owner(i32);
-
-impl Owner {
-    fn add_one(&mut self) {
-        self.0 += 1;
-    }
-    fn print(&self) {
-        println!("`print`: {}", self.0);
+impl<'b, 'a: 'b> Interface<'b, 'a> {
+    pub fn noop(self) {
+        println!("interface consumed");
     }
 }
 
-struct Person<'a> {
-    age: u8,
-    name: &'a str,
+struct Manager<'a> {
+    text: &'a str,
 }
 
-enum Either<'a> {
-    Num(i32),
-    Ref(&'a i32),
+struct List<'a> {
+    manager: Manager<'a>,
 }
 
-fn main() {}
+impl<'a> List<'a> {
+    pub fn get_interface<'b>(&'b mut self) -> Interface<'b, 'a>
+    where
+        'a: 'b,
+    {
+        Interface {
+            manager: &mut self.manager,
+        }
+    }
+}
+
+fn main() {
+    let mut list = List {
+        manager: Manager { text: "hello" },
+    };
+
+    list.get_interface().noop();
+
+    println!("Interface should be dropped here and the borrow released");
+
+    use_list(&list);
+}
+
+fn use_list(list: &List) {
+    println!("{}", list.manager.text);
+}
