@@ -1,44 +1,39 @@
-struct Interface<'b, 'a: 'b> {
-    manager: &'b mut Manager<'a>,
-}
+use std::num::ParseIntError;
 
-impl<'b, 'a: 'b> Interface<'b, 'a> {
-    pub fn noop(self) {
-        println!("interface consumed");
+// 使用 Result 重写后，我们使用模式匹配的方式来处理，而无需使用 `unwrap`
+// 但是这种写法实在过于啰嗦..
+fn multiply(n1_str: &str, n2_str: &str) -> Result<i32, ParseIntError> {
+    match n1_str.parse::<i32>() {
+        Ok(n1) => match n2_str.parse::<i32>() {
+            Ok(n2) => Ok(n1 * n2),
+            Err(e) => Err(e),
+        },
+        Err(e) => Err(e),
     }
 }
 
-struct Manager<'a> {
-    text: &'a str,
+// 重写上面的 `multiply` ，让它尽量简洁
+// 提示：使用 `and_then` 和 `map`
+fn multiply1(n1_str: &str, n2_str: &str) -> Result<i32, ParseIntError> {
+    n1_str
+        .parse::<i32>()
+        .and_then(|x| n2_str.parse::<i32>().map(|y| x * y))
 }
 
-struct List<'a> {
-    manager: Manager<'a>,
-}
-
-impl<'a> List<'a> {
-    pub fn get_interface<'b>(&'b mut self) -> Interface<'b, 'a>
-    where
-        'a: 'b,
-    {
-        Interface {
-            manager: &mut self.manager,
-        }
+fn print(result: Result<i32, ParseIntError>) {
+    match result {
+        Ok(n) => println!("n is {}", n),
+        Err(e) => println!("Error: {}", e),
     }
 }
 
 fn main() {
-    let mut list = List {
-        manager: Manager { text: "hello" },
-    };
+    let twenty = multiply1("10", "2");
+    print(twenty);
 
-    list.get_interface().noop();
+    // 下面的调用会提供更有帮助的错误信息
+    let tt = multiply("t", "2");
+    print(tt);
 
-    println!("Interface should be dropped here and the borrow released");
-
-    use_list(&list);
-}
-
-fn use_list(list: &List) {
-    println!("{}", list.manager.text);
+    println!("Success!")
 }
