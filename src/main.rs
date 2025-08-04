@@ -1,39 +1,27 @@
-use std::num::ParseIntError;
+/* Fill in the blank and fix the error*/
+fn factory(x: i32) -> Box<dyn Fn(i32) -> i32> {
+    let num = 5;
 
-// 使用 Result 重写后，我们使用模式匹配的方式来处理，而无需使用 `unwrap`
-// 但是这种写法实在过于啰嗦..
-fn multiply(n1_str: &str, n2_str: &str) -> Result<i32, ParseIntError> {
-    match n1_str.parse::<i32>() {
-        Ok(n1) => match n2_str.parse::<i32>() {
-            Ok(n2) => Ok(n1 * n2),
-            Err(e) => Err(e),
-        },
-        Err(e) => Err(e),
+    if x > 1 {
+        Box::new(move |x| x + num)
+    } else {
+        Box::new(move |x| x + num)
     }
 }
+fn factory_(x: i32) -> impl Fn(i32) -> i32 {
+    let num = 5;
 
-// 重写上面的 `multiply` ，让它尽量简洁
-// 提示：使用 `and_then` 和 `map`
-fn multiply1(n1_str: &str, n2_str: &str) -> Result<i32, ParseIntError> {
-    n1_str
-        .parse::<i32>()
-        .and_then(|x| n2_str.parse::<i32>().map(|y| x * y))
-}
-
-fn print(result: Result<i32, ParseIntError>) {
-    match result {
-        Ok(n) => println!("n is {}", n),
-        Err(e) => println!("Error: {}", e),
+    //即使表达式一样也被认定为不同的类型 需要提前写好返回的闭包
+    /*
+    if x > 1 {
+        move |x| x + num
+    } else {
+        move |x| x + num
     }
+    */
+    let closure = move |x| x + num;
+    closure
 }
-
 fn main() {
-    let twenty = multiply1("10", "2");
-    print(twenty);
-
-    // 下面的调用会提供更有帮助的错误信息
-    let tt = multiply("t", "2");
-    print(tt);
-
-    println!("Success!")
+    //
 }
