@@ -1,27 +1,24 @@
-/* Fill in the blank and fix the error*/
-fn factory(x: i32) -> Box<dyn Fn(i32) -> i32> {
-    let num = 5;
-
-    if x > 1 {
-        Box::new(move |x| x + num)
-    } else {
-        Box::new(move |x| x + num)
-    }
-}
-fn factory_(x: i32) -> impl Fn(i32) -> i32 {
-    let num = 5;
-
-    //即使表达式一样也被认定为不同的类型 需要提前写好返回的闭包
-    /*
-    if x > 1 {
-        move |x| x + num
-    } else {
-        move |x| x + num
-    }
-    */
-    let closure = move |x| x + num;
-    closure
-}
+/* Make it work */
+use std::collections::HashMap;
 fn main() {
-    //
+    let names = [("sunface", 18), ("sunfei", 18)];
+    let folks: HashMap<_, _> = names.into_iter().collect();
+
+    println!("{:?}", folks);
+
+    let v1: Vec<i32> = vec![1, 2, 3];
+
+    // 4种答案
+
+    let v2: Vec<i32> = v1.iter().cloned().collect();
+    //let v2: Vec<i32> = v1.iter().map(|&x| x).collect();
+    //let v2: Vec<i32> = v1.iter().map(|x| *x).collect();
+
+    /*
+    let mut v1: Vec<i32> = vec![1, 2, 3];
+    let v2: Vec<i32> = v1.iter_mut().map(|&mut x| x + 100).collect();
+    let v2: Vec<i32> = v1.iter_mut().map(|x| *x + 100).collect();
+    */
+
+    assert_eq!(v2, vec![1, 2, 3]);
 }
