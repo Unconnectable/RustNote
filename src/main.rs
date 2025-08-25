@@ -116,34 +116,43 @@
 
 //     println!("{:?}", Instant::now().sub(s));
 // }
+use std::{
+    fs,
+    io::{BufReader, prelude::*},
+    net::{TcpListener, TcpStream},
+};
 
-use std::io::{self};
-use std::net::TcpListener;
-use std::thread;
-mod client;
-mod handle;
-mod server;
-fn main() -> io::Result<()> {
+fn handle_connection(mut stream: TcpStream) {
     //
-    let listener = TcpListener::bind("127.0.0.1:8080")?;
-    println!("server is listening 127.0.0.1:8080");
+    let buf_reader: BufReader<&mut TcpStream> = BufReader::new(&mut stream);
+    let http_requests: Vec<_> = buf_reader
+        .lines()
+        .map(|result| result.unwrap())
+        .take_while(|line| !line.is_empty())
+        .collect();
+
+    let status_line = "HTTP/1.1 200 OK";
+    let contents = fs::read_to_string("hello.html").unwrap();
+    let len = contents.len();
+    // response是String类型 网络中只能传输二进制数据 也就是字节(byte)
+    // 通过 as.bytes()把文本转为字节 类型是 &[u8]的切片 刚好和 .to_string()相反 是字节转为文本
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line, len, contents
+    );
+    stream.write_all(response.as_bytes()).unwrap();
+    println!("Request: {:#?}", http_requests);
+}
+fn main() {
+    const GREEN: &str = "\x1b[32m";
+    const RESET: &str = "\x1b[0m";
+
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
 
     for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                //
-                thread::spawn(|| {
-                    if let Err(e) = handle::handle_client(stream) {
-                        eprintln!("handle client error: {}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                //
-                eprintln!("accept connect error: {}", e);
-            }
-        }
-    }
+        let stream = stream.unwrap();
 
-    Ok(())
+        handle_connection(stream);
+        println!("{GREEN}connection established!{RESET}");
+    }
 }

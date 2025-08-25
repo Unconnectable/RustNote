@@ -174,6 +174,182 @@ fn main() -> io::Result<()> {
 
 ## 单线程
 
+### 1 简单的 request 和返回一个 html 页面的 response
+
+```rust
+use std::{
+    fs,
+    io::{BufReader, prelude::*},
+    net::{TcpListener, TcpStream},
+};
+
+fn handle_connection(mut stream: TcpStream) {
+    //
+    let buf_reader: BufReader<&mut TcpStream> = BufReader::new(&mut stream);
+    let http_requests: Vec<_> = buf_reader
+        .lines()
+        .map(|result| result.unwrap())
+        .take_while(|line| !line.is_empty())
+        .collect();
+
+    let status_line = "HTTP/1.1 200 OK";
+    let contents = fs::read_to_string("hello.html").unwrap();
+    let len = contents.len();
+    // response是String类型 网络中只能传输二进制数据 也就是字节(byte)
+    // 通过 as.bytes()把文本转为字节 类型是 &[u8]的切片 刚好和 .to_string()相反 是字节转为文本
+    let response = format!(
+        "{}\r\nContent-Length: {}\r\n\r\n{}",
+        status_line, len, contents
+    );
+    stream.write_all(response.as_bytes()).unwrap();
+    println!("Request: {:#?}", http_requests);
+}
+fn main() {
+    const GREEN: &str = "\x1b[32m";
+    const RESET: &str = "\x1b[0m";
+
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+        println!("{GREEN}connection established!{RESET}");
+    }
+}
+```
+
+关于 request 和 response 的内容大概:
+
+```sh
+# request
+Method Request-URI HTTP-Version
+headers CRLF
+
+message-body
+
+# response
+
+HTTP-Version Status-Code Reason-Phrase CRLF
+headers CRLF
+
+message-body
+```
+
+**`BufReader` 是一个缓冲读取器**(Buffered Reader).可以当成一个中间层.
+
+当你的程序从 `TcpStream` 读取数据时,每一次读取操作都可能是一个昂贵的系统调用.如果数据量很小,比如每次只读取一个字节,那么频繁的系统调用会大大降低程序性能.
+
+`BufReader` 的作用就是解决这个问题.它会:
+
+1. **一次性从底层读取器**(这里是 `TcpStream`)**读取一大块数据**,并将其存储在内存中的缓冲区里.
+2. 当你的程序需要读取数据时,它首先从这个缓冲区中获取,而不需要再次进行系统调用.
+3. 只有当缓冲区中的数据用完时,`BufReader` 才会再次从 `TcpStream` 读取新的一块数据.
+
+所以,用 `TcpStream` 初始化 `BufReader` 的目的是:**提高 I/O 效率**.这对于处理网络流数据非常重要,因为它能减少与操作系统内核的交互次数,从而让程序运行得更快.
+
+一些处理方法:
+
+- **`.lines()`**:这个方法来自 `BufReader`.它遍历字节流,根据换行符 `\n` 或 `\r\n` 来自动将字节分隔成一行行的字符串,从而让我们能以行的粒度来处理数据.
+- **`.map(|result| result.unwrap())`**:`.lines()` 方法返回的是一个 `Result` 类型的迭代器,因为读取每一行都可能失败(比如连接中断).`map` 用来处理这个 `Result`,在这里我们简单地用 `unwrap()` 取出里面的字符串.
+- **`.take_while(|line| !line.is_empty())`**:这是解析 HTTP 请求头的关键.HTTP 协议规定,请求头部以一个**空行**(`\r\n\r\n`)作为结束标志.`take_while` 会不断地从迭代器中取出行,直到遇到第一个满足条件的行(在这里就是遇到一个空行),然后就停止.这确保了我们只读取 HTTP 请求的头部信息,而忽略了后面的请求体.
+
+### 验证请求,比如当访问不存在的页面的时候如何处理
+
+```rust
+use std::{
+    fs,
+    io::{BufReader, prelude::*},
+    net::{TcpListener, TcpStream},
+};
+
+fn handle_connection(mut stream: TcpStream) {
+    let buf_reader: BufReader<&mut TcpStream> = BufReader::new(&mut stream);
+    let request_line = buf_reader.lines().next().unwrap().unwrap();
+
+    if request_line == "GET / HTTP/1.1" {
+        //
+        let status_line = "HTTP/1.1 200 OK";
+        let contents = fs::read_to_string("hello.html").unwrap();
+        let length = contents.len();
+
+        let response = format!(
+            "{}Content-Length: {}\r\n\r\n{}",
+            status_line, length, contents
+        );
+
+        stream.write_all(response.as_bytes()).unwrap();
+    } else {
+        //
+        let status_line = "HTTP/1.1 404 NOT FOUND";
+        let contents = fs::read_to_string("404.html").unwrap();
+        let length = contents.len();
+
+        let response = format!(
+            "{}Content-Length: {}\r\n\r\n{}",
+            status_line, length, contents
+        );
+
+        stream.write_all(response.as_bytes()).unwrap();
+    }
+    println!("Request: {:#?}", request_line);
+}
+fn main() {
+    const GREEN: &str = "\x1b[32m";
+    const RESET: &str = "\x1b[0m";
+
+    let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+        println!("{GREEN}connection established!{RESET}");
+    }
+}
+```
+
+#### 二者的区别
+
+**第一个程序** 读取了整个 HTTP 请求头,并将其存储在一个向量中,所以你看到了完整的请求信息.  
+**第二个程序** 只读取了 HTTP 请求的第一行(请求行),并将其存储在一个字符串中,所以你只看到了请求行.
+
+##### 用到的 html 文件
+
+`hello.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hello!</title>
+  </head>
+
+  <body>
+    <h1>Hello!</h1>
+    <p>Hi from Rust</p>
+  </body>
+</html>
+```
+
+`404.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>你好!</title>
+  </head>
+
+  <body>
+    <h1>很抱歉!</h1>
+    <p>由于运维删库跑路,我们的数据全部丢失,总监也已经准备跑路,88</p>
+  </body>
+</html>
+```
+
 ## 多线程
 
 ## tokio **异步**
