@@ -352,8 +352,255 @@ fn main() {
 
 ## 多线程
 
+### 先看一个单线程会的问题
+
+运行以下,先打开 http://127.0.01:8080/404 会显示错误页面,然后进入 http://127.0.0.1:8080/sleep
+同时把 404 的第一个打开页面改成出初.始页面 http://127.0.0.1:8080/ 会发现需要等待 slepp 5 秒钟后才会进入
+
+```rust
+use std::{
+    fs,
+    io::{BufReader, prelude::*},
+    net::{TcpListener, TcpStream},
+    thread,
+    time::Duration,
+};
+
+fn handle_connection(mut stream: TcpStream) {
+    let buf_reader: BufReader<&mut TcpStream> = BufReader::new(&mut stream);
+    let request_line_result = buf_reader.lines().next();
+
+    let request_line = if let Some(Ok(line)) = request_line_result {
+        line
+    } else {
+        return;
+    };
+    println!("Request: {:#?}", request_line);
+
+    let (status_line, filename) = match &request_line[..] {
+        "GET / HTTP/1.1" => ("HTTP/1.1 200 OK", "hello.html"),
+        "GET /sleep HTTP/1.1" => {
+            thread::sleep(Duration::from_secs(5));
+            ("HTTP/1.1 200 OK", "hello.html")
+        }
+        _ => ("HTTP/1.1 404 NOT FOUND", "404.html"),
+    };
+
+    let contents = fs::read_to_string(filename).unwrap();
+
+    // let contents = fs::read_to_string(filename).unwrap_or_else(|_| {
+    //     // 如果文件不存在,返回404错误页面
+    //     "<h1>404 Not Found</h1>".to_string()
+    // });
+
+    let length = contents.len();
+
+    let response = format!(
+        "{}Content-Length: {}\r\n\r\n{}",
+        status_line, length, contents
+    );
+
+    stream.write_all(response.as_bytes()).unwrap();
+}
+fn main() {
+    const GREEN: &str = "\x1b[32m";
+    const RESET: &str = "\x1b[0m";
+
+    let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        handle_connection(stream);
+        println!("{GREEN}connection established!{RESET}");
+    }
+}
+```
+
+### 多线程的工作示意图
+
+```sh
++----------------+       +-------------------+
+| 主线程         |       | TCP/HTTP 请求     |
+| (任务生产者)   |------>|(例如: 客户端连接)|
++----------------+       +-------------------+
+        |
+        | 1. 接收到新请求
+        v
++------------------------+
+| ThreadPool::execute()  |
+| (提交任务)             |
++------------------------+
+        |
+        | 2. 将任务打包为 Job
+        |    并发送到任务队列
+        v
++------------------------------------------------+
+|          任务队列 (Channel)                    |
+| +----+----+----+----+----+----+----+----+----+ |
+| | Job| Job|    |    |    |    |    |    |    | |
+| +----+----+----+----+----+----+----+----+----+ |
++------------------------------------------------+
+        ^
+        | 3. 工作线程竞争并
+        |    从队列中取出任务
+        |
++------------------------------------------------+
+|                 线程池 (ThreadPool)            |
+|                                                |
+| +----------------+ +----------------+ +----------------+
+| | Worker #1      | | Worker #2      | | Worker #3      |
+| | (空闲/等待)    | | (空闲/等待)    | | (执行中)       |
+| |                | |                | | 4. 执行任务    |
+| | loop { recv() }| | loop { recv() }| | handle_connection|
+| +----------------+ +----------------+ +----------------+
++------------------------------------------------+
+        ^                       |
+        |                       | 5. 任务完成
+        +-----------------------+
+```
+
+`lib.rs`
+
+```rust
+#[allow(unused_variables)]
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+
+// ---
+// job是什么 函数码 还是闭包 还是二者都可以 解释这里定义job的语法和意义
+
+// `Job` 是一个类型别名(type alias).
+// 它的值是一个实现了特定 trait 的 Box 智能指针.
+// Box<dyn FnOnce() + Send + 'static> 的含义:
+// `Box`:它将闭包或函数包装在堆上,允许我们在运行时决定其具体大小.
+// `dyn FnOnce()`:表示这个 `Box` 包含一个只能被调用一次的闭包或函数(FnOnce),
+//                 并且它不接受任何参数,也不返回任何值(`()`).
+// `Send`:表示这个 `Box` 可以在线程间安全地发送.
+// `'static`:表示这个 `Box` 中的闭包或函数拥有静态生命周期,或者其内部引用的数据
+//           可以存活到程序结束,确保在任何线程中执行都是安全的.
+// 总结:`Job` 既可以是闭包也可以是函数,但通常我们在这里使用闭包,因为闭包可以捕获其
+//       环境中的变量,这在线程池任务中非常常见.
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+pub struct ThreadPool {
+    // threadpool里面有很多个thread 所以是vec包裹的worker
+    worker: Vec<Worker>,
+
+    // 一个线程池有分配好的线程和发送端 为什么需要发送端?
+    // `sender` 是线程池的入口.外部代码通过这个 `sender` 将新的任务(`Job`)发送到线程池中.
+    // 这是一种生产者-消费者模式.外部代码是“生产者”,线程池中的工作线程是“消费者”.
+    // `sender` 扮演了将任务从生产者(`ThreadPool::execute` 方法)传递给消费者(`Worker`)的角色.
+    sender: mpsc::Sender<Job>,
+}
+
+impl ThreadPool {
+    pub fn new(size: usize) -> ThreadPool {
+        // 确保线程池大小大于0,否则会panic
+        assert!(size > 0);
+
+        // 创建一个通道(channel).`tx` 是发送端,`rx` 是接收端.
+        let (tx, rx) = mpsc::channel();
+
+        // 为什么需要 `Arc<Mutex<mpsc::Receiver<Job>>>`?
+        // 1. `mpsc::Receiver`(接收端)不是 `Clone` 的,这意味着它不能直接在多个线程间共享.
+        // 2. `Mutex`(互斥锁)用于提供对 `rx` 的独占访问,确保在任何时候只有一个工作线程能从通道中接收任务.
+        //    这解决了多个线程竞争接收任务的问题.
+        // 3. `Arc`(原子引用计数)允许多个工作线程共享同一个 `Mutex`,它会安全地管理接收端的生命周期,
+        //    当所有工作线程都结束时,`Arc` 引用计数归零,接收端才会被释放.
+        let receiver = Arc::new(Mutex::new(rx));
+
+        // 根据传入的参数初始化size个worker
+        let mut workers: Vec<Worker> = Vec::with_capacity(size);
+
+        for id in 0..size {
+            // 加入size个元素 为什么每一个worker需要接收端 整个工作是如何通过管道的原理来运行的
+            // 每个 `Worker` 内部都包含一个线程.这个线程需要一个接收端来接收任务.
+            // 虽然 `mpsc::Receiver` 不能被克隆,但我们可以克隆包裹它的 `Arc<Mutex<...>>`,
+            // 这样每个线程都拥有一个指向同一个共享接收端的智能指针,从而实现多线程共享一个通道.
+            // 整个工作流程:
+            // 1. 线程池创建时,一个发送端 `tx` 和一个共享接收端 `rx` 被创建.
+            // 2. 线程池根据 `size` 创建多个 `Worker`,并将 `Arc<Mutex<rx>>` 的一个克隆体传递给每个 `Worker`.
+            // 3. 外部调用 `ThreadPool::execute` 时,任务被打包成 `Job` 并通过 `tx` 发送到通道中.
+            // 4. 通道中的任务会被所有等待的 `Worker` 线程竞争接收.当一个 `Worker` 成功锁定 `Mutex` 并从 `rx` 接收到任务后,
+            //    它会立即执行这个任务.其他等待的线程则继续等待下一个任务.
+            workers.push(Worker::new(id, Arc::clone(&receiver)));
+        }
+        ThreadPool {
+            worker: workers,
+            sender: tx,
+        }
+    }
+
+    // 外部初始后调用线程池的.execute函数会传入一个闭包
+    // 解释下面的语法和意义
+    // `execute<F>(&self, f: F)`:
+    // - `<F>`:这是一个泛型参数,代表了传入的闭包的类型.
+    // - `f: F`:`f` 是参数名,类型是泛型 `F`.
+    // `where F: FnOnce() + Send + 'static`:这是 `where` 子句,用于约束泛型 `F` 必须满足的条件:
+    // - `FnOnce()`:`F` 必须是一个可以被调用一次的闭包或函数.这是因为任务执行后就不需要再被调用了.
+    // - `Send`:`F` 必须是可以在线程间安全传递的.
+    // - `'static`:`F` 必须具有 `'static` 生命周期,意味着它不包含任何非 `'static` 的引用.
+    //            这是为了确保闭包在线程中执行时,其捕获的变量始终有效.
+    // - 总结:这个方法接受任何满足上述条件的闭包,并将其打包成 `Job` 类型,然后发送给线程池.
+    pub fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        // 将闭包 `f` 包装成一个堆分配的 `Box`,类型为 `Job`.
+        let job = Box::new(f);
+
+        // 将任务通过发送端 `sender` 发送到通道中.
+        // `.unwrap()`:如果发送失败(例如接收端已断开),程序会panic.
+        self.sender.send(job).unwrap();
+    }
+}
+
+// ---
+// Worker结构体
+struct Worker {
+    // 线程池中每一个单位有两个元素 id 和 对应的线程joinhandle
+    id: usize,
+
+    // 这里的JoinHandle<()>是什么 为什么类型是()
+    // `thread::JoinHandle` 是一个线程句柄,可以用来等待(`join`)线程结束.
+    // `()`(unit type)是 Rust 中表示“无值”的类型.
+    // 在这里,`JoinHandle<()>` 表示这个线程执行完毕后不返回任何值.
+    // `thread::spawn` 函数的返回值就是它内部闭包的返回值类型,
+    // 而我们创建的线程中的 `loop` 闭包没有显式返回值,所以其返回类型默认为 `()`.
+    thread: thread::JoinHandle<()>,
+}
+
+impl Worker {
+    // `Worker` 构造函数
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+        // 创建一个新的线程,并返回其 `JoinHandle`
+        let thread = thread::spawn(move || {
+            // `move` 关键字将 `receiver` 的所有权转移到新线程中.
+            // 否则,如果 `receiver` 被多个线程共享,可能会出现生命周期问题.
+            // 这是一个无限循环,保证工作线程持续运行以接收和执行任务
+            loop {
+                // 1. `receiver.lock().unwrap()`:获取互斥锁.它会阻塞直到获取到锁.
+                // 2. `.recv().unwrap()`:从通道中接收一个任务.它会阻塞直到通道中有一个可用的任务.
+                // 这种双重阻塞机制是线程池设计的关键:工作线程在没有任务时会休眠,避免了空转.
+                let job = receiver.lock().unwrap().recv().unwrap();
+
+                println!("Worker id: {id} got a job ");
+
+                // 执行接收到的任务闭包
+                job();
+            }
+        });
+
+        Worker { id, thread }
+    }
+}
+```
+
 ## tokio **异步**
 
 ```
 
 ```
+
