@@ -740,15 +740,341 @@ async fn main() -> Result<()> {
     let stream = TcpStream::connect("127.0.0.1:6379").await?;
     let mut connection = Connection::new(stream);
 
-    // 示例：发送一个 PING 命令
+    // 示例:发送一个 PING 命令
     let ping_frame = Frame::Array(vec![Frame::Bulk("PING".into())]);
     connection.write_frame(&ping_frame).await?;
 
-    // 示例：读取响应
+    // 示例:读取响应
     if let Some(frame) = connection.read_frame().await? {
         println!("Received frame: {:?}", frame);
     }
 
     Ok(())
+}
+```
+
+### 深入 async
+
+如何给自己类型实现 future 类型 用于实现异步任务调用 await
+
+看一个例子
+
+```rust
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+struct Delay {
+    when: Instant,
+}
+impl Future for Delay {
+    type Output = &'static str;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<&'static str> {
+        if Instant::now() >= self.when {
+            println!("hello world");
+            Poll::Ready("done")
+        } else {
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+}
+#[tokio::main]
+async fn main() {
+    let when = Instant::now() + Duration::from_millis(10);
+    let future = Delay { when };
+
+    let out = future.await;
+    assert_eq!(out, "done");
+}
+```
+
+执行流程:
+
+1. `main` 函数启动,创建一个 `Delay` 实例.
+2. `future.await` 首次调用 `Delay` 的 `poll` 方法.
+3. 如果当前时间还没到 `when`(大概率是这样),`poll` 会返回 `Poll::Pending`,并调用 `waker`.`tokio` 运行时会接收到 `Poll::Pending`,并将此任务挂起.
+4. 由于 `poll` 方法中调用了 `wake_by_ref()`,`tokio` 会立即(在极短的时间内)再次调用 `Delay` 的 `poll` 方法.
+5. 这个过程会持续重复,形成一个非常快的循环,直到当前时间超过了 `when`.
+6. 一旦时间满足条件,`poll` 返回 `Poll::Ready("done")`,`await` 表达式结束等待,并将结果 `"done"` 赋值给 `out`.
+7. `assert_eq!(out, "done")` 成功断言,程序正常退出.
+
+解释这里的参数
+`self:Pin<&mut Self>`:需要使用 Pin 把内容顶在内存中保证不改变位置
+`cx: &mut Context<'_>`: Context 有对 waker 的引用 需要保证 waker 不能比她活得更久 出现悬垂引用
+
+手动实现类似 aysnc 的异步状态机
+
+```rust
+use futures::task;
+use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+
+struct Delay {
+    when: Instant,
+}
+impl Future for Delay {
+    type Output = &'static str;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<&'static str> {
+        if Instant::now() >= self.when {
+            println!("hello world");
+            Poll::Ready("done")
+        } else {
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+}
+struct MiniTokio {
+    tasks: VecDeque<Task>,
+}
+
+//允许将任何实现了 Future Trait 的具体类型(如 async { ... } 块或 Delay)放入同一个队列中
+type Task = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+impl MiniTokio {
+    fn new() -> MiniTokio {
+        MiniTokio {
+            tasks: VecDeque::new(),
+        }
+    }
+
+    /// 生成一个 Future并放入 mini-tokio 实例的任务队列中
+    fn spawn<F>(&mut self, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+        //Future<Output = ()>: 必须是一个返回 () 的 Future.
+    {
+        self.tasks.push_back(Box::pin(future));
+    }
+
+    fn run(&mut self) {
+        let waker = task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        //取出任务
+        while let Some(mut task) = self.tasks.pop_front() {
+            //轮询任务 如果没有完成 把它从后面放回队列
+            if task.as_mut().poll(&mut cx).is_pending() {
+                self.tasks.push_back(task);
+            }
+        }
+    }
+}
+
+fn main() {
+    let mut mini_tokio = MiniTokio::new();
+
+    mini_tokio.spawn(async {
+        let when = Instant::now() + Duration::from_millis(10);
+        let future = Delay { when };
+
+        let out = future.await;
+        assert_eq!(out, "done");
+    });
+
+    mini_tokio.run();
+}
+```
+
+如何通过 wake 执行 poll 呢
+
+```rust
+impl Future for Delay {
+    type Output = &'static str;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<&'static str> {
+        if Instant::now() >= self.when {
+            println!("hello world");
+            Poll::Ready("done")
+        } else {
+            // cx.waker().wake_by_ref();
+            // Poll::Pending
+
+            let waker = cx.waker().clone();
+            let when = self.when;
+            thread::spawn(move || {
+                let now = Instant::now();
+
+                //没有到时间 让线程睡眠 过一会再唤醒
+                if now < when {
+                    thread::sleep(when - now);
+                }
+                waker.wake();
+            });
+            Poll::Pending
+        }
+    }
+}
+```
+
+### 第一个版本:忙循环(Busy Loop)
+
+这个版本在 `poll` 方法中直接使用了 `cx.waker().wake_by_ref()`.
+
+```rust
+// 如果时间未到
+else {
+    cx.waker().wake_by_ref(); // 立即唤醒
+    Poll::Pending
+}
+```
+
+**运行流程(假设延迟 10 秒)**:
+
+1. **0 秒**:`poll` 方法被调用,发现时间未到.
+2. **0 秒**:它立即调用 `wake_by_ref`,请求执行器再次轮询.然后它返回 `Poll::Pending`.
+3. **0.0001 秒**:执行器收到唤醒通知,再次调用 `poll`.
+4. **0.0001 秒**:`poll` 方法再次发现时间未到,再次调用 `wake_by_ref`.
+5. **持续 10 秒**:这个过程以每秒成千上万次的频率重复进行.执行器线程在这 10 秒内几乎 100% 都在忙于重复调用 `poll`,无法处理任何其他任务.
+
+**数据总结**:
+
+- **CPU 占用**:极高,因为执行器线程在 10 秒内几乎 100% 都在忙于重复调用 `poll`.
+- **效率**:极低,所有其他任务都被阻塞.
+
+---
+
+### 第二个版本:线程阻塞(Thread Blocking)
+
+这个版本将 `waker` 的调用转移到了一个新的线程中.
+
+```rust
+// 如果时间未到
+else {
+    let waker = cx.waker().clone();
+    let when = self.when;
+
+    thread::spawn(move || {
+        thread::sleep(when - Instant::now()); // 阻塞式休眠
+        waker.wake(); // 休眠结束后唤醒
+    });
+
+    Poll::Pending // 立即返回
+}
+```
+
+**运行流程(假设延迟 10 秒)**:
+
+1. **0 秒**:`poll` 方法被调用,发现时间未到.
+2. **0 秒**:`poll` 方法立即派生一个新线程,并返回 `Poll::Pending`.
+3. **0.0001 秒**:主执行器线程立即返回,可以去处理队列中的其他任务.
+4. **10 秒**:新线程在后台休眠 10 秒后,被操作系统唤醒.
+5. **10 秒**:新线程调用 `waker.wake()`,这会向主执行器发送一个信号.
+6. **10.0001 秒**:主执行器收到信号,将该任务再次放入其队列.在下一次循环中,执行器会再次轮询该任务.
+
+**数据总结**:
+
+- **CPU 占用**:主执行器线程的 CPU 占用在 10 秒内极低,因为大部分时间它都在等待或处理其他任务.只有在任务最终完成时,它才会被再次唤醒.
+- **效率**:高,主线程没有被阻塞,可以同时处理其他任务.但要注意,额外创建的 OS 线程会有一些内存和上下文切换的开销.
+
+### 一个简化的 Rust 异步运行时(executor),我们称之为 MiniTokio.它包含了异步编程中的核心组件:任务(Task)、调度器(Scheduler) 和 唤醒器(Waker).
+
+```rust
+use crossbeam::channel::{self};
+use futures::lock::Mutex;
+use std::sync::Arc;
+
+use futures::task::{self, ArcWake};
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::thread;
+use std::time::{Duration, Instant};
+struct Delay {
+    when: Instant,
+}
+impl Future for Delay {
+    type Output = &'static str;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<&'static str> {
+        if Instant::now() >= self.when {
+            println!("hello world");
+            Poll::Ready("done")
+        } else {
+            let waker = cx.waker().clone();
+            let when = self.when;
+            thread::spawn(move || {
+                let now = Instant::now();
+                if now < when {
+                    thread::sleep(when - now);
+                }
+                waker.wake();
+            });
+            Poll::Pending
+        }
+    }
+}
+struct MiniTokio {
+    scheduled: channel::Receiver<Arc<Task>>,
+    sender: channel::Sender<Arc<Task>>,
+}
+struct Task {
+    future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    executor: channel::Sender<Arc<Task>>,
+}
+impl Task {
+    fn poll(self: Arc<Self>) {
+        let waker = task::waker(self.clone());
+        let mut cx = Context::from_waker(&waker);
+
+        let mut future = self.future.try_lock().unwrap();
+        let _ = future.as_mut().poll(&mut cx);
+    }
+    fn schedule(self: &Arc<Self>) {
+        self.executor.send(self.clone());
+    }
+
+    fn spawn<F>(future: F, sender: &channel::Sender<Arc<Task>>)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let task = Arc::new(Task {
+            future: Mutex::new(Box::pin(future)),
+            executor: sender.clone(),
+        });
+
+        let _ = sender.send(task);
+    }
+}
+impl ArcWake for Task {
+    fn wake_by_ref(arc_self: &Arc<Self>) {
+        arc_self.schedule();
+    }
+}
+impl MiniTokio {
+    fn new() -> MiniTokio {
+        let (sender, scheduled) = channel::unbounded();
+        MiniTokio { scheduled, sender }
+    }
+
+    fn spawn<F>(&mut self, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        Task::spawn(future, &self.sender);
+    }
+
+    fn run(&mut self) {
+        while let Ok(task) = self.scheduled.recv() {
+            task.poll();
+        }
+    }
+}
+
+fn main() {
+    let mut mini_tokio = MiniTokio::new();
+
+    mini_tokio.spawn(async {
+        let when = Instant::now() + Duration::from_millis(10);
+        let future = Delay { when };
+
+        let out = future.await;
+        assert_eq!(out, "done");
+    });
+
+    mini_tokio.run();
 }
 ```
