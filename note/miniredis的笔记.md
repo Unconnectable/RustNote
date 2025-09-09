@@ -1078,3 +1078,41 @@ fn main() {
     mini_tokio.run();
 }
 ```
+
+### **异步任务的流程总结**
+
+#### **1. 任务启动**
+
+1. **MiniTokio** 创建一个**通道**，得到一个**发送端**（`sender`）和一个**接收端**（`scheduled`）。
+   - `let (sender, scheduled) = channel::unbounded();`
+2. 它把这个**发送端**交给一个**新的任务（Task）**。
+   - `mini_tokio.spawn(async { ... });`
+3. **Task** 用这个**发送端**，把自己**投递**到通道里。
+   - `Task::spawn(...)` 调用 `sender.send(task);`
+
+#### **2. 任务执行**
+
+1. **MiniTokio** 的主循环从通道的**接收端**（`scheduled`）取出**任务**。
+   - `while let Ok(task) = self.scheduled.recv() { ... }`
+2. 它调用**任务**的 `poll` 方法，开始执行。
+   - `task.poll();`
+3. **任务**执行时，发现还没完成，就告诉 **MiniTokio**：“我需要等待。”
+   - `Delay::poll(...)` 返回 `Poll::Pending`
+
+#### **3. 任务挂起与唤醒**
+
+1. **任务**返回“等待”状态，同时把自己的**唤醒凭证（waker）** 交给**外部线程**去保管。
+   - `let waker = cx.waker().clone();`
+2. **外部线程**等待时间到了，就使用这个**唤醒凭证**。
+   - `thread::spawn(...)` 内部调用 `waker.wake();`
+3. **唤醒凭证**触发，告诉**任务**：“醒来吧，可以继续了。”
+   - `waker.wake()` 触发 `Task` 的 `wake_by_ref()` 方法。
+4. **任务**被唤醒后，使用一开始得到的**发送端**（`executor` 成员），再次把自己投递回通道。
+   - `arc_self.schedule()` 调用 `self.executor.send(self.clone());`
+
+#### **4. 再次执行**
+
+1. **MiniTokio** 循环再次从通道的**接收端**（`scheduled`）取出**任务**。
+   - `while let Ok(task) = self.scheduled.recv() { ... }`
+2. 这次，任务可能已经完成，于是返回“完成”状态，流程结束。
+   - `Delay::poll(...)` 返回 `Poll::Ready("done")`
