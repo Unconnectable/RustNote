@@ -1083,36 +1083,178 @@ fn main() {
 
 #### **1. 任务启动**
 
-1. **MiniTokio** 创建一个**通道**，得到一个**发送端**（`sender`）和一个**接收端**（`scheduled`）。
+1. **MiniTokio** 创建一个**通道**,得到一个**发送端**(`sender`)和一个**接收端**(`scheduled`).
    - `let (sender, scheduled) = channel::unbounded();`
-2. 它把这个**发送端**交给一个**新的任务（Task）**。
+2. 它把这个**发送端**交给一个**新的任务(Task)**.
    - `mini_tokio.spawn(async { ... });`
-3. **Task** 用这个**发送端**，把自己**投递**到通道里。
+3. **Task** 用这个**发送端**,把自己**投递**到通道里.
    - `Task::spawn(...)` 调用 `sender.send(task);`
 
 #### **2. 任务执行**
 
-1. **MiniTokio** 的主循环从通道的**接收端**（`scheduled`）取出**任务**。
+1. **MiniTokio** 的主循环从通道的**接收端**(`scheduled`)取出**任务**.
    - `while let Ok(task) = self.scheduled.recv() { ... }`
-2. 它调用**任务**的 `poll` 方法，开始执行。
+2. 它调用**任务**的 `poll` 方法,开始执行.
    - `task.poll();`
-3. **任务**执行时，发现还没完成，就告诉 **MiniTokio**：“我需要等待。”
+3. **任务**执行时,发现还没完成,就告诉 **MiniTokio**:“我需要等待.”
    - `Delay::poll(...)` 返回 `Poll::Pending`
 
 #### **3. 任务挂起与唤醒**
 
-1. **任务**返回“等待”状态，同时把自己的**唤醒凭证（waker）** 交给**外部线程**去保管。
+1. **任务**返回“等待”状态,同时把自己的**唤醒凭证(waker)** 交给**外部线程**去保管.
    - `let waker = cx.waker().clone();`
-2. **外部线程**等待时间到了，就使用这个**唤醒凭证**。
+2. **外部线程**等待时间到了,就使用这个**唤醒凭证**.
    - `thread::spawn(...)` 内部调用 `waker.wake();`
-3. **唤醒凭证**触发，告诉**任务**：“醒来吧，可以继续了。”
-   - `waker.wake()` 触发 `Task` 的 `wake_by_ref()` 方法。
-4. **任务**被唤醒后，使用一开始得到的**发送端**（`executor` 成员），再次把自己投递回通道。
+3. **唤醒凭证**触发,告诉**任务**:“醒来吧,可以继续了.”
+   - `waker.wake()` 触发 `Task` 的 `wake_by_ref()` 方法.
+4. **任务**被唤醒后,使用一开始得到的**发送端**(`executor` 成员),再次把自己投递回通道.
    - `arc_self.schedule()` 调用 `self.executor.send(self.clone());`
 
 #### **4. 再次执行**
 
-1. **MiniTokio** 循环再次从通道的**接收端**（`scheduled`）取出**任务**。
+1. **MiniTokio** 循环再次从通道的**接收端**(`scheduled`)取出**任务**.
    - `while let Ok(task) = self.scheduled.recv() { ... }`
-2. 这次，任务可能已经完成，于是返回“完成”状态，流程结束。
+2. 这次,任务可能已经完成,于是返回“完成”状态,流程结束.
    - `Delay::poll(...)` 返回 `Poll::Ready("done")`
+
+## async 迭代器
+
+```rust
+use tokio_stream::StreamExt;
+use mini_redis::client;
+
+async fn publish() -> mini_redis::Result<()> {
+    let mut client = client::connect("127.0.0.1:6379").await?;
+
+    // 发布一些数据
+    client.publish("numbers", "1".into()).await?;
+    client.publish("numbers", "two".into()).await?;
+    client.publish("numbers", "3".into()).await?;
+    client.publish("numbers", "four".into()).await?;
+    client.publish("numbers", "five".into()).await?;
+    client.publish("numbers", "6".into()).await?;
+    client.publish("Sharon", "ILOVESHARON".into()).await?;
+    client.publish("Kelly", "BITCH".into()).await?;
+    Ok(())
+}
+
+async fn subscribe() -> mini_redis::Result<()> {
+    let client = client::connect("127.0.0.1:6379").await?;
+    let subscriber = client.subscribe(
+        vec!["numbers".to_string(), "Sharon".to_string(), "Kelly".to_string()]
+    ).await?;
+
+    let messages = subscriber.into_stream();
+
+    tokio::pin!(messages);
+    while let Some(v) = messages.next().await {
+        println!("GOT: {:?}", v);
+    }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> mini_redis::Result<()> {
+    tokio::spawn(async { publish().await });
+
+    subscribe().await?;
+
+    println!("DONE");
+
+    Ok(())
+}
+```
+
+注意这里的`main`不能写成以下
+
+```rust
+#[tokio::main]
+async fn main() -> mini_redis::Result<()> {
+    tokio::spawn(async { publish().await });
+    tokio::spawn(async { subscribe().await});
+    println!("DONE");
+    Ok(())
+}
+```
+
+```rust
+#[tokio::main]
+async fn main() -> mini_redis::Result<()> {
+    publish().await?;
+    tokio::spawn(async { subscribe().await});
+    println!("DONE");
+    Ok(())
+}
+```
+
+### 使用适配器
+
+```rust
+use tokio_stream::StreamExt;
+use mini_redis::client;
+
+async fn publish() -> mini_redis::Result<()> {
+    let mut client = client::connect("127.0.0.1:6379").await?;
+
+    // 发布一些数据
+    client.publish("numbers", "1".into()).await?;
+    client.publish("numbers", "two".into()).await?;
+    client.publish("numbers", "3".into()).await?;
+    client.publish("numbers", "four".into()).await?;
+    client.publish("numbers", "five".into()).await?;
+    client.publish("numbers", "6".into()).await?;
+    client.publish("Sharon", "LOVE".into()).await?;
+    client.publish("Kelly", "LOVE".into()).await?;
+    Ok(())
+}
+
+async fn subscribe() -> mini_redis::Result<()> {
+    let client = client::connect("127.0.0.1:6379").await?;
+    let subscriber = client.subscribe(
+        vec!["numbers".to_string(), "Sharon".to_string(), "Kelly".to_string()]
+    ).await?;
+
+    let messages = subscriber
+        .into_stream()
+        .filter(|msg| {
+            match msg {
+                //Ok(msg) if msg.content.len() == 1 => true,
+                Ok(msg) if msg.content.len() == 4 => true,
+                _ => false,
+            }
+        })
+        .map(|msg| msg.unwrap().content)
+        .take(3);
+
+    tokio::pin!(messages);
+    while let Some(v) = messages.next().await {
+        println!("GOT: {:?}", v);
+    }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> mini_redis::Result<()> {
+    tokio::spawn(async { publish().await });
+
+    subscribe().await?;
+
+    println!("DONE");
+
+    Ok(())
+}
+```
+
+注意下这里的`msg`的类型
+
+map 里的类型是:`msg: &Result<Message, Box<dyn Error + Send + Sync>>`
+以及 unwrap 后的结构体 为什么不直接使用`len()`
+
+```rust
+pub struct Message {
+    pub channel: String,
+    pub content: Bytes,
+}
+```
