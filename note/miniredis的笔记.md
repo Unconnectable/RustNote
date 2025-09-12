@@ -1258,3 +1258,73 @@ pub struct Message {
     pub content: Bytes,
 }
 ```
+
+#### 对结构体实现`Stream`特征 能够实现异步迭代
+
+```rust
+
+use tokio_stream::Stream;
+use std::pin::Pin;
+use std::task::{ Context, Poll };
+use std::time::{ Duration, Instant };
+use std::thread;
+use tokio_stream::StreamExt;
+//use tokio_stream::StreamExt;
+struct Delay {
+    when: Instant,
+}
+impl Future for Delay {
+    type Output = &'static str;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<&'static str> {
+        if Instant::now() >= self.when {
+            println!("hello world");
+            Poll::Ready("done")
+        } else {
+            let waker = cx.waker().clone();
+            let when = self.when;
+            thread::spawn(move || {
+                let now = Instant::now();
+                if now < when {
+                    thread::sleep(when - now);
+                }
+                waker.wake();
+            });
+            Poll::Pending
+        }
+    }
+}
+struct Interval {
+    rem: usize,
+    delay: Delay,
+}
+impl Stream for Interval {
+    type Item = ();
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<()>> {
+        //
+        if self.rem == 0 {
+            return Poll::Ready(None);
+        }
+
+        match Pin::new(&mut self.delay).poll(cx) {
+            Poll::Ready(_) => {
+                let when = self.delay.when + Duration::from_secs(2);
+                self.delay = Delay { when };
+                self.rem -= 1;
+                Poll::Ready(Some(()))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+#[tokio::main]
+async fn main() {
+    let mut interval = Interval {
+        rem: 5,
+        delay: Delay { when: Instant::now() + Duration::from_secs_f32(2.0) },
+    };
+
+    while let Some(_) = interval.next().await {
+        println!("ready");
+    }
+}
+```

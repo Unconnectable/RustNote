@@ -170,7 +170,28 @@
 //     // async 块本身就是一个 Future.
 //     mini_tokio.spawn(async {
 //         // 计算一个未来 10 毫秒的时间点.
-//         let when = Instant::now() + Duration::from_millis(10);
+//         let when = Insuse tokio::io::AsyncWriteExt;
+// use tokio::net::TcpStream;
+// use std::{ clone, io };
+// use std::net::SocketAddr;
+
+// async fn race(data: &mut [u8], addr1: SocketAddr, addr2: SocketAddr) -> io::Result<()> {
+//     tokio::select! {
+//         Ok(_) = async {
+//             let mut socket = TcpStream::connect(addr1).await?;
+//             socket.write_all(data).await?;
+//             Ok::<_, io::Error>(())
+//         } => {}
+//         Ok(_) = async {
+//             let mut socket = TcpStream::connect(addr2).await?;
+//             socket.write_all(data).await?;
+//             Ok::<_, io::Error>(())
+//         } => {}
+//         else => {}
+//     }
+
+//     Ok(())
+// }tant::now() + Duration::from_millis(10);
 //         // 创建一个 Delay Future 实例.
 //         let future = Delay { when };
 
@@ -239,28 +260,28 @@
 //     Ok(())
 // }
 
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
-use std::{ clone, io };
-use std::net::SocketAddr;
+// use tokio::io::AsyncWriteExt;
+// use tokio::net::TcpStream;
+// use std::{ clone, io };
+// use std::net::SocketAddr;
 
-async fn race(data: &mut [u8], addr1: SocketAddr, addr2: SocketAddr) -> io::Result<()> {
-    tokio::select! {
-        Ok(_) = async {
-            let mut socket = TcpStream::connect(addr1).await?;
-            socket.write_all(data).await?;
-            Ok::<_, io::Error>(())
-        } => {}
-        Ok(_) = async {
-            let mut socket = TcpStream::connect(addr2).await?;
-            socket.write_all(data).await?;
-            Ok::<_, io::Error>(())
-        } => {}
-        else => {}
-    }
+// async fn race(data: &mut [u8], addr1: SocketAddr, addr2: SocketAddr) -> io::Result<()> {
+//     tokio::select! {
+//         Ok(_) = async {
+//             let mut socket = TcpStream::connect(addr1).await?;
+//             socket.write_all(data).await?;
+//             Ok::<_, io::Error>(())
+//         } => {}
+//         Ok(_) = async {
+//             let mut socket = TcpStream::connect(addr2).await?;
+//             socket.write_all(data).await?;
+//             Ok::<_, io::Error>(())
+//         } => {}
+//         else => {}
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }
 // #[tokio::main]
 // async fn main() {
 //     //race(data, addr1, addr2)
@@ -287,58 +308,123 @@ async fn race(data: &mut [u8], addr1: SocketAddr, addr2: SocketAddr) -> io::Resu
 
 //     println!("All channels have been closed.");
 // }
+mod test;
+// use tokio_stream::StreamExt;
+// use mini_redis::client;
 
+// async fn publish() -> mini_redis::Result<()> {
+//     let mut client = client::connect("127.0.0.1:6379").await?;
+
+//     // 发布一些数据
+//     client.publish("numbers", "1".into()).await?;
+//     client.publish("numbers", "two".into()).await?;
+//     client.publish("numbers", "3".into()).await?;
+//     client.publish("numbers", "four".into()).await?;
+//     client.publish("numbers", "five".into()).await?;
+//     client.publish("numbers", "6".into()).await?;
+//     client.publish("Sharon", "LOVE".into()).await?;
+//     client.publish("Kelly", "LOVE".into()).await?;
+//     Ok(())
+// }
+
+// async fn subscribe() -> mini_redis::Result<()> {
+//     let client = client::connect("127.0.0.1:6379").await?;
+//     let subscriber = client.subscribe(
+//         vec!["numbers".to_string(), "Sharon".to_string(), "Kelly".to_string()]
+//     ).await?;
+
+//     let messages = subscriber
+//         .into_stream()
+//         .filter(|msg| {
+//             match msg {
+//                 //Ok(msg) if msg.content.len() == 1 => true,
+//                 Ok(msg) if msg.content.len() == 4 => true,
+//                 _ => false,
+//             }
+//         })
+//         .map(|msg| msg.unwrap().content)
+//         .take(3);
+
+//     tokio::pin!(messages);
+//     while let Some(v) = messages.next().await {
+//         println!("GOT: {:?}", v);
+//     }
+
+//     Ok(())
+// }
+
+// #[tokio::main]
+// async fn main() -> mini_redis::Result<()> {
+//     tokio::spawn(async { publish().await });
+
+//     subscribe().await?;
+
+//     println!("DONE");
+
+//     Ok(())
+// }
+
+use tokio_stream::Stream;
+use std::pin::Pin;
+use std::task::{ Context, Poll };
+use std::time::{ Duration, Instant };
+use std::thread;
 use tokio_stream::StreamExt;
-use mini_redis::client;
-
-async fn publish() -> mini_redis::Result<()> {
-    let mut client = client::connect("127.0.0.1:6379").await?;
-
-    // 发布一些数据
-    client.publish("numbers", "1".into()).await?;
-    client.publish("numbers", "two".into()).await?;
-    client.publish("numbers", "3".into()).await?;
-    client.publish("numbers", "four".into()).await?;
-    client.publish("numbers", "five".into()).await?;
-    client.publish("numbers", "6".into()).await?;
-    client.publish("Sharon", "LOVE".into()).await?;
-    client.publish("Kelly", "LOVE".into()).await?;
-    Ok(())
+//use tokio_stream::StreamExt;
+struct Delay {
+    when: Instant,
 }
-
-async fn subscribe() -> mini_redis::Result<()> {
-    let client = client::connect("127.0.0.1:6379").await?;
-    let subscriber = client.subscribe(
-        vec!["numbers".to_string(), "Sharon".to_string(), "Kelly".to_string()]
-    ).await?;
-
-    let messages = subscriber
-        .into_stream()
-        .filter(|msg| {
-            match msg {
-                //Ok(msg) if msg.content.len() == 1 => true,
-                Ok(msg) if msg.content.len() == 4 => true,
-                _ => false,
-            }
-        })
-        .map(|msg| msg.unwrap().content)
-        .take(3);
-
-    tokio::pin!(messages);
-    while let Some(v) = messages.next().await {
-        println!("GOT: {:?}", v);
+impl Future for Delay {
+    type Output = &'static str;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<&'static str> {
+        if Instant::now() >= self.when {
+            println!("hello world");
+            Poll::Ready("done")
+        } else {
+            let waker = cx.waker().clone();
+            let when = self.when;
+            thread::spawn(move || {
+                let now = Instant::now();
+                if now < when {
+                    thread::sleep(when - now);
+                }
+                waker.wake();
+            });
+            Poll::Pending
+        }
     }
-
-    Ok(())
 }
+struct Interval {
+    rem: usize,
+    delay: Delay,
+}
+impl Stream for Interval {
+    type Item = ();
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<()>> {
+        //
+        if self.rem == 0 {
+            return Poll::Ready(None);
+        }
 
+        match Pin::new(&mut self.delay).poll(cx) {
+            Poll::Ready(_) => {
+                let when = self.delay.when + Duration::from_secs(2);
+                self.delay = Delay { when };
+                self.rem -= 1;
+                Poll::Ready(Some(()))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
 #[tokio::main]
-async fn main() -> mini_redis::Result<()> {
-    tokio::spawn(async { publish().await });
+async fn main() {
+    let mut interval = Interval {
+        rem: 5,
+        delay: Delay { when: Instant::now() + Duration::from_secs_f32(2.0) },
+    };
 
-    subscribe().await?;
-
-    println!("DONE");
-
-    Ok(())
+    while let Some(_) = interval.next().await {
+        println!("ready");
+    }
 }
